@@ -2,6 +2,8 @@
 #include <vector>
 #include <string>
 #include <cassert>
+#include <chrono>
+#include <thread>
 
 using namespace std;
 
@@ -28,6 +30,11 @@ int main(int argc, char **argv) {
         cin >> row;
 
     auto result = RollingBalls().restorePattern(start, target);
+
+    // To sort of ensure that ErrorReader thread in tester will get a chance
+    // to pick all stderr up.
+    cerr.flush();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     cout << result.size() << endl;
     for (auto s : result)

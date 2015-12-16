@@ -21,4 +21,4 @@ else
 fi
 
 time java -jar tester/tester.jar \
-    -exec "./driver.sh" -seed "$seed" #-vis
+    -exec "./driver.sh" -seed "$seed" #-novis
