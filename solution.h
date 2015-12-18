@@ -167,25 +167,29 @@ typedef int CellSet;
 const CellSet CS_UNKNOWN = 0;
 const CellSet CS_EMPTY = 1;
 const CellSet CS_ANY_BALL = 2;
+const CellSet CS_FIRST_BALL = CS_ANY_BALL + 1;
+const CellSet CS_LAST_BALL = CS_ANY_BALL + 10;
 // TODO: check that there are no off-by one errors for balls '0' and '9'
+const CellSet CS_WALL = 13;
 const CellSet CS_CONTRADICTION = 123;
 bool is_valid_cs(CellSet s) {
     return
         s == CS_UNKNOWN ||
         s == CS_EMPTY ||
-        (s >= CS_ANY_BALL && s <= CS_ANY_BALL + 10) ||
-        s == CS_CONTRADICTION;
+        (s >= CS_ANY_BALL && s <= CS_LAST_BALL) ||
+        s == CS_WALL;
 }
 bool cs_is_ball(CellSet s) {
     assert(is_valid_cs(s));
-    return s >= CS_ANY_BALL && s <= CS_ANY_BALL + 10;
+    return s >= CS_ANY_BALL && s <= CS_LAST_BALL;
 }
 CellSet cell_to_cs(Cell c) {
-    if (c == EMPTY) {
+    if (c == EMPTY)
         return 0;
-    }
+    if (c == WALL)
+        return CS_WALL;
     assert(is_ball(c));
-    return CS_ANY_BALL + 1 + (c - '0');
+    return CS_FIRST_BALL + (c - '0');
 }
 char cs_to_char(CellSet s) {
     switch (s) {
@@ -195,42 +199,57 @@ char cs_to_char(CellSet s) {
         return '.';
     case CS_ANY_BALL:
         return '?';
+    case CS_WALL:
+        return 'W';
     case CS_CONTRADICTION:
         return '!';
     default:
-        assert(s > CS_ANY_BALL && s <= CS_ANY_BALL + 10);
-        return '0' + (s - CS_ANY_BALL - 1);
+        assert(s >= CS_FIRST_BALL && s <= CS_LAST_BALL);
+        return '0' + (s - CS_FIRST_BALL);
     }
 }
-CellSet combine_cs_with_cell(CellSet s, Cell c) {
-    assert(is_valid_cs(s));
-    assert(s != CS_CONTRADICTION);
-    assert(is_valid_cell(c));
-    assert(c != WALL);
 
-    if (c == EMPTY) {
-        if (s == CS_UNKNOWN || s == CS_EMPTY)
-            return CS_EMPTY;
-        else
-            return CS_CONTRADICTION;
-    } else {
-        assert(is_ball(c));
-        CellSet concrete_ball = c - '0' + 1 + CS_ANY_BALL;
-        if (s == CS_UNKNOWN || s == CS_ANY_BALL || s == concrete_ball)
-            return concrete_ball;
-        else
-            return CS_CONTRADICTION;
-    }
+CellSet combine_cs_with_empty(CellSet s) {
+    if (s == CS_UNKNOWN || s == CS_EMPTY)
+        return CS_EMPTY;
+    else
+        return CS_CONTRADICTION;
+}
+CellSet combine_cs_with_concrete_ball(CellSet s, Cell ball) {
+    assert(is_ball(ball));
+    CellSet concrete_ball = ball - '0' + 1 + CS_ANY_BALL;
+    if (s == CS_UNKNOWN || s == CS_ANY_BALL || s == concrete_ball)
+        return concrete_ball;
+    else
+        return CS_CONTRADICTION;
 }
 CellSet combine_cs_with_any_ball(CellSet s) {
     assert(is_valid_cs(s));
-    assert(s != CS_CONTRADICTION);
     if (s == CS_UNKNOWN)
         return CS_ANY_BALL;
     else if (cs_is_ball(s))
         return s;
     else
         return CS_CONTRADICTION;
+}
+CellSet combine_with_obstace(CellSet s) {
+    assert(is_valid_cs(s));
+    if (s == CS_WALL)
+        return CS_WALL;
+    return combine_cs_with_any_ball(s);
+}
+
+// TODO: get rid of
+CellSet combine_cs_with_cell(CellSet s, Cell c) {
+    assert(is_valid_cs(s));
+    assert(s != CS_CONTRADICTION);
+    assert(is_valid_cell(c));
+    assert(c != WALL);
+
+    if (c == EMPTY)
+        return combine_cs_with_empty(s);
+    else
+        return combine_cs_with_concrete_ball(s, c);
 }
 
 
@@ -368,7 +387,7 @@ private:
             PackedCoord p = from + dir;
             while (initial_board[p] != WALL) {
                 CellSet cs = infoset_get(infoset, p);
-                if (combine_cs_with_cell(cs, EMPTY) == CS_CONTRADICTION)
+                if (combine_cs_with_empty(cs) == CS_CONTRADICTION)
                     break;
                 result.emplace_back(from, p);
                 p += dir;
@@ -388,7 +407,7 @@ private:
         PackedCoord p = move.first + dir;
         while (p != move.second) {
             CellSet &cs = infoset[p];
-            cs = combine_cs_with_cell(cs, EMPTY);
+            cs = combine_cs_with_empty(cs);
             assert(cs != CS_CONTRADICTION);
             p += dir;
         }
@@ -399,7 +418,7 @@ private:
         from_cs = combine_cs_with_any_ball(from_cs);
         assert(from_cs != CS_CONTRADICTION);
 
-        assert(combine_cs_with_cell(to_cs, EMPTY) != CS_CONTRADICTION);
+        assert(combine_cs_with_empty(to_cs) != CS_CONTRADICTION);
         to_cs = from_cs;
         from_cs = CS_EMPTY;
     }
