@@ -163,90 +163,11 @@ vector<PackedCoord> gen_backward_rolls_vector(
 }
 
 
-// https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm
-class SCC {
-public:
-    struct Component {
-        int id;
-        vector<PackedCoord> vs;
-        set<int> in_edges;  // component IDs
-        set<int> out_edges;  // component IDs
-    };
-
-    vector<Component> components;
-    map<PackedCoord, int> component_by_v;
-
-    SCC(const Board &board)
-        : board(board),
-          visited(board.size(), false) {
-
-        // only makes sense on empty board
-        for (Cell c : board)
-            assert(!is_ball(c));
-
-        for (PackedCoord u = 0; u < board.size(); u++)
-            if (board[u] == EMPTY)
-                visit(u);
-
-        reverse(L.begin(), L.end());
-
-        for (PackedCoord u : L) {
-            if (board[u] == EMPTY && component_by_v.count(u) == 0) {
-                components.emplace_back();
-                components.back().id = components.size() - 1;
-                assign(u);
-            }
-        }
-
-        for (PackedCoord u = 0; u < board.size(); u++) {
-            if (board[u] == EMPTY) {
-                int u_comp = component_by_v.at(u);
-                for (PackedCoord v : gen_forward_rolls_vector(u, board)) {
-                    int v_comp = component_by_v.at(v);
-                    if (u_comp != v_comp) {
-                        assert(u_comp < v_comp);
-                        components[u_comp].out_edges.insert(v_comp);
-                        components[v_comp].in_edges.insert(u_comp);
-                    }
-                }
-            }
-        }
-    }
-
-    const Component& get_component(PackedCoord p) const {
-        return components[component_by_v.at(p)];
-    }
-
-private:
-    const Board &board;
-    vector<bool> visited;
-    vector<PackedCoord> L;
-
-    void visit(PackedCoord u) {
-        if (visited[u])
-            return;
-        visited[u] = true;
-        for (PackedCoord v : gen_forward_rolls_vector(u, board))
-            visit(v);
-        L.push_back(u);
-    }
-
-    void assign(PackedCoord u) {
-        if (component_by_v.count(u) > 0)
-            return;
-        component_by_v[u] = components.size() - 1;
-        components.back().vs.push_back(u);
-        for (PackedCoord v : gen_backward_rolls_vector(u, board))
-            assign(v);
-    }
-};
-
-
 typedef int CellSet;
 const CellSet CS_UNKNOWN = 0;
 const CellSet CS_EMPTY = 1;
 const CellSet CS_ANY_BALL = 2;
-// TODO: test that there are no off-by one errors for balls '0' and '9'
+// TODO: check that there are no off-by one errors for balls '0' and '9'
 const CellSet CS_CONTRADICTION = 123;
 bool is_valid_cs(CellSet s) {
     return
@@ -506,80 +427,14 @@ public:
             }
         }
 
-        Board walls = start;
-        for (auto &cell : walls)
-            if (is_ball(cell))
-                cell = EMPTY;
-
-        /*for (int i = 0; i < ::H; i++) {
-            for (int j = 0; j < ::W; j++) {
-                cerr << walls[pack(j, i)] << ' ';
-            }
-            cerr << endl;
-        }*/
-
-        /*
-        vector<pair<PackedCoord, PackedCoord>> all_forward_rolls;
-        vector<pair<PackedCoord, PackedCoord>> all_backward_rolls;
-        for (PackedCoord p = 0; p < ::W * ::H; p++) {
-            if (walls[p] == EMPTY) {
-                for (PackedCoord to : gen_forward_rolls_vector(p, walls))
-                    all_forward_rolls.emplace_back(p, to);
-                for (PackedCoord from : gen_backward_rolls_vector(p, walls))
-                    all_backward_rolls.emplace_back(from, p);
-            }
-        }
-        sort(all_forward_rolls.begin(), all_forward_rolls.end());
-        sort(all_backward_rolls.begin(), all_backward_rolls.end());
-        assert(all_forward_rolls == all_backward_rolls);
-        */
-
-        /*
-        SCC scc(walls);
-        debug(scc.component_by_v);
-        for (auto c : scc.components) {
-            cerr << "Component " << c.id << endl;
-            debug(c.vs.size());
-            debug(c.vs);
-            debug(c.in_edges);
-            debug(c.out_edges);
-            cerr << "-------" << endl;
-        }
-
-        draw_board([&](PackedCoord p) {
-            if (walls[p] == WALL) {
-                ansi_style(DEFAULT_COLOR, true);
-                cerr << "  ";
-                return;
-            }
-            auto c = scc.get_component(p);
-            if (c.in_edges.empty()) {
-                ansi_style(RED);
-                cerr << "x ";
-                return;
-            }
-            if (c.vs.size() > 20) {
-                ansi_style(GREEN);
-                if (is_ball(target[p]))
-                    cerr << "{}";
-                else
-                    cerr << (c.id % 10) << " ";
-                return;
-            }
-            cerr << "  ";
-        });
-        */
-
         Infoset goal;
         for (PackedCoord p = 0; p < target.size(); p++) {
             if (is_ball(target[p])) {
                 goal[p] = cell_to_cs(target[p]);
                 if (goal.size() == 1)
                     break;
-                // break;
             }
         }
-        // goal[pack(2, 1)] = CS_EMPTY;
         Backtracker bt(start, goal);
 
         vector<string> result;
