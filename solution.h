@@ -177,15 +177,16 @@ void apply_move(Board &board, Move move) {
 }
 
 
-typedef int CellSet;
-const CellSet CS_UNKNOWN = 0;
-const CellSet CS_EMPTY = 1;
-const CellSet CS_ANY_BALL = 2;
-const CellSet CS_FIRST_BALL = CS_ANY_BALL + 1;
-const CellSet CS_LAST_BALL = CS_ANY_BALL + 10;
-// TODO: check that there are no off-by one errors for balls '0' and '9'
-const CellSet CS_WALL = 13;
-const CellSet CS_CONTRADICTION = 123;
+enum CellSet {
+    CS_UNKNOWN = 0,
+    CS_EMPTY = 1,
+    CS_ANY_BALL = 2,
+    CS_FIRST_BALL = CS_ANY_BALL + 1,
+    // TODO: check that there are no off-by-ones
+    CS_LAST_BALL = CS_ANY_BALL + 10,
+    CS_WALL = 13,
+    CS_CONTRADICTION = 123
+};
 bool is_valid_cs(CellSet s) {
     return
         s == CS_UNKNOWN ||
@@ -199,11 +200,11 @@ bool cs_is_ball(CellSet s) {
 }
 CellSet cell_to_cs(Cell c) {
     if (c == EMPTY)
-        return 0;
+        return CS_EMPTY;
     if (c == WALL)
         return CS_WALL;
     assert(is_ball(c));
-    return CS_FIRST_BALL + (c - '0');
+    return CellSet(CS_FIRST_BALL + (c - '0'));
 }
 char cs_to_char(CellSet s) {
     switch (s) {
@@ -231,7 +232,7 @@ CellSet combine_cs_with_empty(CellSet s) {
 }
 CellSet combine_cs_with_concrete_ball(CellSet s, Cell ball) {
     assert(is_ball(ball));
-    CellSet concrete_ball = ball - '0' + 1 + CS_ANY_BALL;
+    CellSet concrete_ball = CellSet(ball - '0' + 1 + CS_ANY_BALL);
     if (s == CS_UNKNOWN || s == CS_ANY_BALL || s == concrete_ball)
         return concrete_ball;
     else
