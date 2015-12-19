@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <sstream>
+#include <cstdint>
 
 #include "pretty_printing.h"
 
@@ -328,47 +329,70 @@ public:
     }
 
     void enumerate_moves(function<void(Move move)> callback) {
-        auto conflicts_copy = conflicts;  // they will be modified
+        // TODO: switch to sorted vector and binsearch
+        // (when building it we can be certain al items are unique)
+        set<PackedCoord> explored_froms;
 
-        set<PackedCoord> froms;
+        set<PackedCoord> stage1_froms;
 
-        for (PackedCoord from : conflicts_copy) {
-            Conflict ct = conflict_type(from);
-            assert(ct != NO_CONFLICT);
-            if (ct == CONFLICT_FILL)
-                continue;
-            froms.insert(from);
+        for (int stage = 0; stage < 2; stage ++) {
+            // stage 0: expand from non-fill conflicts
+            // stage 1: expand from removable obstacles we saw on stage 1
 
-            for (int dir : DIRS) {
-                CellSet fulcrum = combine_with_obstacle(cur[from - dir]);
-                if (fulcrum == CS_CONTRADICTION)
-                    continue;
+            vector<PackedCoord> froms_to_explore;
+            if (stage == 0) {
+                for (PackedCoord from : conflicts) {
+                    Conflict ct = conflict_type(from);
+                    assert(ct != NO_CONFLICT);
+                    if (ct != CONFLICT_FILL)
+                        froms_to_explore.push_back(from);
+                }
+            } else if (stage == 1) {
+                froms_to_explore = {stage1_froms.begin(), stage1_froms.end()};
+            } else {
+                assert(false);
+            }
 
-                RestorePoint rp(*this);
-                edit_cur(from - dir, fulcrum);
+            for (PackedCoord from : froms_to_explore) {
+                explored_froms.insert(from);
 
-                // TODO: combine with any ball just in case
-                CellSet rolling_ball = cur[from];
-                edit_cur(from, CS_EMPTY);
+                for (int dir : DIRS) {
+                    CellSet fulcrum = combine_with_obstacle(cur[from - dir]);
+                    if (fulcrum == CS_CONTRADICTION)
+                        continue;
 
-                PackedCoord p = from + dir;
-                while (true) {
-                    auto e = combine_cs_with_empty(cur[p]);
-                    if (e == CS_CONTRADICTION)
-                        break;
+                    RestorePoint rp(*this);
+                    edit_cur(from - dir, fulcrum);
 
-                    {
-                        RestorePoint rp2(*this);
-                        edit_cur(p, rolling_ball);
-                        // assert(check_conflicts());
-                        callback({from, p});
+                    // TODO: combine with any ball just in case
+                    CellSet rolling_ball = cur[from];
+                    edit_cur(from, CS_EMPTY);
+
+                    PackedCoord p = from + dir;
+                    while (true) {
+                        auto e = combine_cs_with_empty(cur[p]);
+                        if (e == CS_CONTRADICTION) {
+                            if (cur[p] != CS_WALL && stage == 0) {
+                                stage1_froms.insert(p);
+                            }
+                            break;
+                        }
+
+                        {
+                            RestorePoint rp2(*this);
+                            edit_cur(p, rolling_ball);
+                            // assert(check_conflicts());
+                            callback({from, p});
+                        }
+
+                        edit_cur(p, e);
+                        p += dir;
                     }
-
-                    edit_cur(p, e);
-                    p += dir;
                 }
             }
         }
+
+        auto conflicts_copy = conflicts;  // they will be modified
         for (PackedCoord to : conflicts_copy) {
             Conflict ct = conflict_type(to);
             assert(ct != NO_CONFLICT);
@@ -382,7 +406,8 @@ public:
                     auto rolling_ball = combine_cs_with_any_ball(cur[p]);
                     if (rolling_ball != CS_CONTRADICTION) {
                         auto fulcrum = combine_with_obstacle(cur[p - dir]);
-                        if (fulcrum != CS_CONTRADICTION && froms.count(p) == 0) {
+                        if (fulcrum != CS_CONTRADICTION &&
+                            explored_froms.count(p) == 0) {
                             RestorePoint rp2(*this);
                             edit_cur(p - dir, fulcrum);
                             edit_cur(p, CS_EMPTY);
@@ -544,9 +569,9 @@ public:
     Backtracker(State &state, int min_depth, int max_depth) : state(state) {
         solved = false;
         for (int depth = min_depth; depth <= max_depth; depth++) {
-            // debug(depth);
+            debug(depth);
             rec(depth);
-            // debug(cnt);
+            debug(cnt);
             if (solved)
                 break;
         }
@@ -565,11 +590,13 @@ public:
 private:
     State &state;
     vector<Move> moves;
-    int cnt = 0;
+    int64_t cnt = 0;
 
     void rec(int depth) {
         if (solved)
             return;
+
+        cnt++;
 
         if (state.get_conflicts().empty()) {
             solved = true;
@@ -600,7 +627,6 @@ private:
             return;
         // TODO: same line heuristic
 
-        cnt++;
         state.enumerate_moves([this, depth](Move move){
             moves.push_back(move);
 
@@ -650,6 +676,38 @@ public:
 
         Board board = start;
 
+        ////////////
+        map<PackedCoord, CellSet> goal;
+        for (PackedCoord p = 0; p < board.size(); p++) {
+            if (is_ball(target[p])) {
+                goal[p] = cell_to_cs(target[p]);
+                if (goal.size() == 2)
+                    break;
+            }
+        }
+        goal.erase(goal.begin()->first);
+        State state(board, goal);
+        state.show();
+        Backtracker bt(state, 1, 11);
+        debug(bt.solved);
+        if (bt.solved) {
+            for (auto move : bt.solution) {
+                debug(unpack_move(move));
+                state.apply_move(move);
+                state.show();
+            }
+
+            auto sol = bt.solution;
+            reverse(sol.begin(), sol.end());
+            for (auto move : sol) {
+                move = reversed_move(move);
+                apply_move(board, move);
+                result.push_back(format_move(move));
+            }
+        }
+        ////////////
+
+        /*
         int depth = 1;
         while (depth <= 6) {
             show_start_and_target(board, target);
@@ -684,7 +742,7 @@ public:
             }
             debug(num_improvements);
             depth++;
-        }
+        }*/
 
         int num_balls = 0;
         for (auto c : target)
