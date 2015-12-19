@@ -699,6 +699,19 @@ public:
         debug(num_balls);
         debug(num_balls * 20 - result.size());
         debug(result.size());
+
+        double score = 0.0;
+        for (PackedCoord p = 0; p < board.size(); p++) {
+            if (is_ball(target[p])) {
+                if (board[p] == target[p])
+                    score += 1.0;
+                else if (is_ball(board[p]))
+                    score += 0.5;
+            }
+        }
+        if (num_balls > 0)
+            score /= num_balls;
+        debug(score);
         return result;
     }
 
