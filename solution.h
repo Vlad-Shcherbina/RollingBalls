@@ -329,9 +329,7 @@ public:
     }
 
     void enumerate_moves(function<void(Move move)> callback) {
-        // TODO: switch to sorted vector and binsearch
-        // (when building it we can be certain al items are unique)
-        set<PackedCoord> explored_froms;
+        vector<PackedCoord> explored_froms;
 
         vector<PackedCoord> stage0_froms;
         for (PackedCoord from : conflicts) {
@@ -358,7 +356,7 @@ public:
             }
 
             for (PackedCoord from : froms_to_explore) {
-                explored_froms.insert(from);
+                explored_froms.push_back(from);
 
                 for (int dir : DIRS) {
                     CellSet fulcrum = combine_with_obstacle(cur[from - dir]);
@@ -397,6 +395,8 @@ public:
             }
         }
 
+        sort(explored_froms.begin(), explored_froms.end());
+
         auto conflicts_copy = conflicts;  // they will be modified
         for (PackedCoord to : conflicts_copy) {
             Conflict ct = conflict_type(to);
@@ -412,7 +412,9 @@ public:
                     if (rolling_ball != CS_CONTRADICTION) {
                         auto fulcrum = combine_with_obstacle(cur[p - dir]);
                         if (fulcrum != CS_CONTRADICTION &&
-                            explored_froms.count(p) == 0) {
+                            !binary_search(
+                                explored_froms.begin(), explored_froms.end(), p)) {
+
                             RestorePoint rp2(*this);
                             edit_cur(p - dir, fulcrum);
                             edit_cur(p, CS_EMPTY);
