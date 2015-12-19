@@ -108,6 +108,7 @@ void ansi_default() {
 
 
 void draw_board(function<void(PackedCoord)> draw_cell_fn) {
+#ifdef DRAW_BOARDS
     for (int i = 1; i < ::H - 1; i++) {
         for (int j = 1; j < ::W - 1; j++) {
             draw_cell_fn(pack(j, i));
@@ -115,6 +116,7 @@ void draw_board(function<void(PackedCoord)> draw_cell_fn) {
         }
         cerr << "|" << endl;
     }
+#endif
 }
 
 
@@ -164,6 +166,14 @@ vector<PackedCoord> gen_backward_rolls_vector(
     vector<PackedCoord> result;
     gen_backward_rolls(from, board, back_inserter(result));
     return result;
+}
+
+
+void apply_move(Board &board, Move move) {
+    auto tos = gen_forward_rolls_vector(move.first, board);
+    assert(find(tos.begin(), tos.end(), move.second) != tos.end());
+    board[move.second] = board[move.first];
+    board[move.first] = EMPTY;
 }
 
 
@@ -267,11 +277,11 @@ public:
             edit_cur(kv.first, kv.second);
         }
 
-        assert(check_conflicts());
+        // assert(check_conflicts());
     }
 
     void show() {
-        assert(check_conflicts());
+        // assert(check_conflicts());
         draw_board([this](PackedCoord p) {
             auto cs = cur[p];
             auto c = initial_board[p];
@@ -304,16 +314,16 @@ public:
             cerr << cs_to_char(cs);
             cerr << (c == EMPTY ? ' ' : c);
         });
-        cerr << "moves: ";
-        for (auto move : moves)
-            cerr << unpack_move(move) << " ";
-        cerr << endl;
-        cerr << "conflicts: ";
-        for (auto p : conflicts)
-            cerr << unpack(p) << " ";
-        cerr << endl;
-        debug2(undo_log, conflict_undo_log);
-        cerr << endl;
+        // cerr << "moves: ";
+        // for (auto move : moves)
+        //     cerr << unpack_move(move) << " ";
+        // cerr << endl;
+        // cerr << "conflicts: ";
+        // for (auto p : conflicts)
+        //     cerr << unpack(p) << " ";
+        // cerr << endl;
+        // debug2(undo_log, conflict_undo_log);
+        // cerr << endl;
     }
 
     void enumerate_moves(function<void()> callback) {
@@ -351,7 +361,7 @@ public:
                         moves.emplace_back(from, p);
 
                         edit_cur(p, rolling_ball);
-                        assert(check_conflicts());
+                        // assert(check_conflicts());
                         callback();
 
                         assert(moves.back() == make_pair(from, p));
@@ -381,7 +391,7 @@ public:
                             edit_cur(p - dir, fulcrum);
                             edit_cur(p, CS_EMPTY);
                             edit_cur(to, rolling_ball);
-                            assert(check_conflicts());
+                            // assert(check_conflicts());
 
                             moves.emplace_back(p, to);
 
@@ -543,25 +553,25 @@ public:
     bool solved;
     vector<Move> solution;
 
-    Backtracker(State &state) : state(state) {
+    Backtracker(State &state, int min_depth, int max_depth) : state(state) {
         solved = false;
-        for (int depth = 1; depth <= 11; depth++) {
-            debug(depth);
+        for (int depth = min_depth; depth <= max_depth; depth++) {
+            // debug(depth);
             rec(depth);
-            debug(cnt);
+            // debug(cnt);
             if (solved)
                 break;
         }
-        debug(solved);
+        // debug(solved);
 
-        State::RestorePoint rp(state);
-        for (auto move : solution) {
-            debug(unpack_move(move));
-            state.apply_move(move);
-            state.show();
-        }
+        // State::RestorePoint rp(state);
+        // for (auto move : solution) {
+        //     debug(unpack_move(move));
+        //     state.apply_move(move);
+        //     state.show();
+        // }
 
-        debug(solution.size());
+        // debug(solution.size());
     }
 
 private:
@@ -610,9 +620,22 @@ private:
 };
 
 
+void show_start_and_target(const Board &start, const Board &target) {
+    map<PackedCoord, CellSet> goal;
+    for (PackedCoord p = 0; p < start.size(); p++) {
+        if (is_ball(target[p]))
+            goal[p] = cell_to_cs(target[p]);
+    }
+    State state(start, goal);
+    state.show();
+}
+
+
 class RollingBalls {
 public:
     vector<string> restorePattern(vector<string> raw_start, vector<string> raw_target) {
+        vector<string> result;
+
         ::H = raw_start.size();
         ::W = raw_start.front().size();
         assert(raw_target.size() == ::H);
@@ -631,25 +654,51 @@ public:
             }
         }
 
-        map<PackedCoord, CellSet> goal;
-        for (PackedCoord p = 0; p < target.size(); p++) {
-            if (is_ball(target[p])) {
-                goal[p] = cell_to_cs(target[p]);
-                if (goal.size() == 2)
-                    break;
+        Board board = start;
+
+        int depth = 1;
+        while (depth <= 6) {
+            show_start_and_target(board, target);
+            debug(depth);
+            int num_improvements = 0;
+
+            for (PackedCoord p = 0; p < board.size(); p++) {
+                if (is_ball(target[p]) && target[p] != board[p]) {
+                    map<PackedCoord, CellSet> goal;
+                    goal[p] = cell_to_cs(target[p]);
+
+                    // keep all already achieved ones
+                    for (PackedCoord p2 = 0; p2 < board.size(); p2++) {
+                        if (is_ball(target[p2]) && target[p2] == board[p2])
+                            goal[p2] = cell_to_cs(target[p2]);
+                    }
+
+                    State state(board, goal);
+
+                    Backtracker bt(state, 1, depth);
+                    if (bt.solved) {
+                        auto sol = bt.solution;
+                        reverse(sol.begin(), sol.end());
+                        for (auto move : sol) {
+                            move = reversed_move(move);
+                            apply_move(board, move);
+                            result.push_back(format_move(move));
+                        }
+                        num_improvements++;
+                    }
+                }
             }
+            debug(num_improvements);
+            depth++;
         }
-        // goal.erase(goal.begin()->first);
-        State state(start, goal);
-        state.show();
 
-        Backtracker bt(state);
-        auto sol = bt.solution;
-        reverse(sol.begin(), sol.end());
-
-        vector<string> result;
-        for (auto move : sol)
-            result.push_back(format_move(reversed_move(move)));
+        int num_balls = 0;
+        for (auto c : target)
+            if (is_ball(c))
+                num_balls++;
+        debug(num_balls);
+        debug(num_balls * 20 - result.size());
+        debug(result.size());
         return result;
     }
 

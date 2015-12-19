@@ -13,6 +13,7 @@ clang++ \
     -fno-sanitize-recover \
     main.cpp -o main
 
+    # -DNDEBUG \
 
 if [ -z "$1" ]; then
     seed=1
@@ -21,4 +22,4 @@ else
 fi
 
 time java -jar tester/tester.jar \
-    -exec "./driver.sh" -seed "$seed" #-novis
+    -exec "./driver.sh" -seed "$seed" -novis

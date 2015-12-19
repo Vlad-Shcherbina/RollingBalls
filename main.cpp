@@ -7,6 +7,7 @@
 
 using namespace std;
 
+#define DRAW_BOARDS
 
 #include "solution.h"
 
