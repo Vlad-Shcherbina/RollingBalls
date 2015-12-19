@@ -5,6 +5,7 @@
 #include <iterator>
 #include <algorithm>
 #include <map>
+#include <sstream>
 
 #include "pretty_printing.h"
 
@@ -75,6 +76,9 @@ int move_dir(Move move) {
 }
 pair<pair<int, int>, pair<int, int>> unpack_move(Move move) {
     return {unpack(move.first), unpack(move.second)};
+}
+Move reversed_move(Move move) {
+    return {move.second, move.first};
 }
 
 
@@ -232,195 +236,376 @@ CellSet combine_cs_with_any_ball(CellSet s) {
     else
         return CS_CONTRADICTION;
 }
-CellSet combine_with_obstace(CellSet s) {
+CellSet combine_with_obstacle(CellSet s) {
     assert(is_valid_cs(s));
     if (s == CS_WALL)
         return CS_WALL;
     return combine_cs_with_any_ball(s);
 }
 
-// TODO: get rid of
-CellSet combine_cs_with_cell(CellSet s, Cell c) {
-    assert(is_valid_cs(s));
-    assert(s != CS_CONTRADICTION);
-    assert(is_valid_cell(c));
-    assert(c != WALL);
 
-    if (c == EMPTY)
-        return combine_cs_with_empty(s);
-    else
-        return combine_cs_with_concrete_ball(s, c);
-}
+typedef int Conflict;
+const Conflict NO_CONFLICT = 0;
+const Conflict CONFLICT_FILL = 1;
+const Conflict CONFLICT_CLEAR = 2;
+const Conflict CONFLICT_REPLACE = 3;
 
 
-template <typename K, typename V>
-V map_get_default(const map<K, V> &m, K k, V def) {
-    auto p = m.find(k);
-    if (p != m.end())
-        return p->second;
-    else
-        return def;
-}
+class State {
+public:
+    State(const Board &initial_board, map<PackedCoord, CellSet> goal)
+        : initial_board(initial_board), cur(initial_board.size(), CS_UNKNOWN) {
 
-
-typedef map<PackedCoord, CellSet> Infoset;
-CellSet infoset_get(const Infoset &infoset, PackedCoord p) {
-    return map_get_default(infoset, p, CS_UNKNOWN);
-}
-
-
-void show_infoset(const Infoset &infoset, const Board &initial_board) {
-    draw_board([&](PackedCoord p) {
-        auto cs = infoset.count(p) > 0 ? infoset.at(p) : CS_UNKNOWN;
-        auto c = initial_board[p];
-
-        if (c == WALL) {
-            ansi_style(DEFAULT_COLOR, true);
-            cerr << "  ";
-            return;
+        PackedCoord p = 0;
+        for (Cell cell : initial_board) {
+            if (cell == WALL)
+                cur[p] = CS_WALL;
+            p++;
         }
 
-        if (combine_cs_with_cell(cs, c) == CS_CONTRADICTION)
-            ansi_style(RED, true);
-        else
-            ansi_style(GREEN);
-        cerr << cs_to_char(cs);
+        for (auto kv : goal) {
+            edit_cur(kv.first, kv.second);
+        }
 
-        ansi_default();
-        cerr << c;
-    });
-}
+        assert(check_conflicts());
+    }
+
+    void show() {
+        assert(check_conflicts());
+        draw_board([this](PackedCoord p) {
+            auto cs = cur[p];
+            auto c = initial_board[p];
+
+            if (c == WALL) {
+                assert(cs == CS_WALL);
+                ansi_style(DEFAULT_COLOR, true);
+                cerr << "  ";
+                return;
+            }
+
+            if (cs != CS_UNKNOWN) {
+                switch (conflict_type(p)) {
+                case NO_CONFLICT:
+                    ansi_style(GREEN);
+                    break;
+                case CONFLICT_FILL:
+                    ansi_style(GREEN, true);
+                    break;
+                case CONFLICT_CLEAR:
+                    ansi_style(RED, true);
+                    break;
+                case CONFLICT_REPLACE:
+                    ansi_style(YELLOW, true);
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+            cerr << cs_to_char(cs);
+            cerr << (c == EMPTY ? ' ' : c);
+        });
+        cerr << "moves: ";
+        for (auto move : moves)
+            cerr << unpack_move(move) << " ";
+        cerr << endl;
+        cerr << "conflicts: ";
+        for (auto p : conflicts)
+            cerr << unpack(p) << " ";
+        cerr << endl;
+        debug2(undo_log, conflict_undo_log);
+        cerr << endl;
+    }
+
+    void enumerate_moves(function<void()> callback) {
+        auto conflicts_copy = conflicts;  // they will be modified
+
+        set<PackedCoord> froms;
+
+        for (PackedCoord from : conflicts_copy) {
+            Conflict ct = conflict_type(from);
+            assert(ct != NO_CONFLICT);
+            if (ct == CONFLICT_FILL)
+                continue;
+            froms.insert(from);
+
+            for (int dir : DIRS) {
+                CellSet fulcrum = combine_with_obstacle(cur[from - dir]);
+                if (fulcrum == CS_CONTRADICTION)
+                    continue;
+
+                RestorePoint rp(*this);
+                edit_cur(from - dir, fulcrum);
+
+                // TODO: combine with any ball just in case
+                CellSet rolling_ball = cur[from];
+                edit_cur(from, CS_EMPTY);
+
+                PackedCoord p = from + dir;
+                while (true) {
+                    auto e = combine_cs_with_empty(cur[p]);
+                    if (e == CS_CONTRADICTION)
+                        break;
+
+                    {
+                        RestorePoint rp2(*this);
+                        moves.emplace_back(from, p);
+
+                        edit_cur(p, rolling_ball);
+                        assert(check_conflicts());
+                        callback();
+
+                        assert(moves.back() == make_pair(from, p));
+                        moves.pop_back();
+                    }
+
+                    edit_cur(p, e);
+                    p += dir;
+                }
+            }
+        }
+        for (PackedCoord to : conflicts_copy) {
+            Conflict ct = conflict_type(to);
+            assert(ct != NO_CONFLICT);
+            if (ct != CONFLICT_FILL)
+                continue;
+
+            for (int dir : DIRS) {
+                RestorePoint rp(*this);
+                PackedCoord p = to - dir;
+                while (true) {
+                    auto rolling_ball = combine_cs_with_any_ball(cur[p]);
+                    if (rolling_ball != CS_CONTRADICTION) {
+                        auto fulcrum = combine_with_obstacle(cur[p - dir]);
+                        if (fulcrum != CS_CONTRADICTION && froms.count(p) == 0) {
+                            RestorePoint rp2(*this);
+                            edit_cur(p - dir, fulcrum);
+                            edit_cur(p, CS_EMPTY);
+                            edit_cur(to, rolling_ball);
+                            assert(check_conflicts());
+
+                            moves.emplace_back(p, to);
+
+                            callback();
+
+                            assert(moves.back() == make_pair(p, to));
+                            moves.pop_back();
+                        }
+                    }
+
+                    auto e = combine_cs_with_empty(cur[p]);
+                    if (e == CS_CONTRADICTION)
+                        break;
+                    edit_cur(p, e);
+                    p -= dir;
+                }
+            }
+        }
+
+    }
+
+    void apply_move(Move move) {
+        PackedCoord from = move.first;
+        PackedCoord to = move.second;
+        int dir = move_dir(move);
+
+        CellSet fulcrum = combine_with_obstacle(cur[from - dir]);
+        assert(fulcrum != CS_CONTRADICTION);
+        edit_cur(from - dir, fulcrum);
+
+        CellSet rolling_ball = combine_cs_with_any_ball(cur[from]);
+        assert(rolling_ball != CS_CONTRADICTION);
+
+        edit_cur(from, CS_EMPTY);
+
+        PackedCoord p = from + dir;
+        while (p != to) {
+            auto e = combine_cs_with_empty(cur[p]);
+            assert(e != CS_CONTRADICTION);
+            edit_cur(p, e);
+            p += dir;
+        }
+
+        auto dst = combine_cs_with_empty(cur[to]);
+        assert(dst != CS_CONTRADICTION);
+        edit_cur(to, rolling_ball);
+    }
+
+    const vector<PackedCoord>& get_conflicts() const { return conflicts; }
+    const vector<Move>& get_moves() const { return moves; }
+
+    class RestorePoint {
+    public:
+        RestorePoint(State &state) : state(state) {
+            undo_log_size = state.undo_log.size();
+            conflict_undo_log_size = state.conflict_undo_log.size();
+        }
+        ~RestorePoint() {
+            assert(state.undo_log.size() >= undo_log_size);
+            while (state.undo_log.size() > undo_log_size) {
+                state.cur[state.undo_log.back().first] = state.undo_log.back().second;
+                state.undo_log.pop_back();
+            }
+
+            assert(state.conflict_undo_log.size() >= conflict_undo_log_size);
+            while (state.conflict_undo_log.size() > conflict_undo_log_size) {
+                auto &q = state.conflict_undo_log.back();
+                if (q.second) {
+                    state.conflicts.push_back(q.first);
+                } else {
+                    auto it = find(state.conflicts.begin(), state.conflicts.end(), q.first);
+                    assert(it != state.conflicts.end());
+                    swap(*it, state.conflicts.back());
+                    state.conflicts.pop_back();
+                }
+                state.conflict_undo_log.pop_back();
+            }
+        }
+    private:
+        State &state;
+        int undo_log_size;
+        int conflict_undo_log_size;
+    };
+
+    Conflict conflict_type(PackedCoord p) const {
+        assert(initial_board[p] != WALL);
+
+        if (initial_board[p] == EMPTY) {
+            if (combine_cs_with_empty(cur[p]) == CS_CONTRADICTION)
+                return CONFLICT_CLEAR;
+            else
+                return NO_CONFLICT;
+        } else {
+            assert(is_ball(initial_board[p]));
+            if (cur[p] == CS_EMPTY)
+                return CONFLICT_FILL;
+
+            if (combine_cs_with_concrete_ball(cur[p], initial_board[p]) ==
+                CS_CONTRADICTION)
+                return CONFLICT_REPLACE;
+            else
+                return NO_CONFLICT;
+        }
+    }
+
+private:
+    const Board &initial_board;
+    vector<CellSet> cur;
+    vector<PackedCoord> conflicts;
+
+    vector<pair<PackedCoord, CellSet>> undo_log;
+    // true to add, false to remove
+    vector<pair<PackedCoord, bool>> conflict_undo_log;
+
+    vector<Move> moves;
+
+    void edit_cur(PackedCoord p, CellSet new_cs) {
+        assert(is_valid_cs(new_cs));
+        if (cur[p] != new_cs) {
+            assert(initial_board[p] != WALL);
+            assert(new_cs != CS_WALL);
+
+            undo_log.emplace_back(p, cur[p]);
+
+            Conflict old_conflict = conflict_type(p);
+            cur[p] = new_cs;
+            Conflict new_conflict = conflict_type(p);
+
+            if (old_conflict == NO_CONFLICT && new_conflict != NO_CONFLICT) {
+                conflicts.push_back(p);
+                conflict_undo_log.emplace_back(p, false);
+            } else if (old_conflict != NO_CONFLICT && new_conflict == NO_CONFLICT) {
+                auto it = find(conflicts.begin(), conflicts.end(), p);
+                assert(it != conflicts.end());
+                swap(*it, conflicts.back());
+                conflicts.pop_back();
+                conflict_undo_log.emplace_back(p, true);
+            }
+        }
+    }
+
+    bool check_conflicts() const {
+        for (PackedCoord p = 0; p < initial_board.size(); p++) {
+            if (initial_board[p] == WALL)
+                continue;
+            auto it = find(conflicts.begin(), conflicts.end(), p);
+            if (conflict_type(p) == NO_CONFLICT)
+                assert(it == conflicts.end());
+            else
+                assert(it != conflicts.end());
+        }
+        return true;
+    }
+};
 
 
 class Backtracker {
 public:
-    Backtracker(const Board &initial_board, const Infoset &goal) :
-        initial_board(initial_board) {
+    bool solved;
+    vector<Move> solution;
 
+    Backtracker(State &state) : state(state) {
         solved = false;
-        for (int depth = 1; depth <= 8; depth++) {
+        for (int depth = 1; depth <= 11; depth++) {
             debug(depth);
-            rec(goal, depth);
+            rec(depth);
+            debug(cnt);
             if (solved)
                 break;
         }
         debug(solved);
 
-        cerr << "=================" << endl;
-
-        Infoset current = goal;
-        show_infoset(current, initial_board);
+        State::RestorePoint rp(state);
         for (auto move : solution) {
             debug(unpack_move(move));
-            apply_move(current, move);
-            show_infoset(current, initial_board);
+            state.apply_move(move);
+            state.show();
         }
+
+        debug(solution.size());
     }
+
 private:
-    const Board &initial_board;
-    vector<Move> moves;
+    State &state;
+    int cnt = 0;
 
-    bool solved;
-    vector<Move> solution;
-
-    void rec(const Infoset &current, int depth) {
+    void rec(int depth) {
         if (solved)
             return;
-        vector<PackedCoord> need_fill;
-        vector<PackedCoord> need_clear;
-        for (const auto &kv : current) {
-            Cell c = initial_board[kv.first];
-            assert(c != WALL);
-            CellSet cs = kv.second;
 
-            if (combine_cs_with_cell(cs, c) == CS_CONTRADICTION) {
-                if (is_ball(c))
-                    need_fill.push_back(kv.first);
-                if (combine_cs_with_any_ball(cs) != CS_CONTRADICTION)
-                    need_clear.push_back(kv.first);
-            }
-        }
-
-        if (need_fill.empty() && need_clear.empty()) {
+        if (state.get_conflicts().empty()) {
             solved = true;
-            solution = moves;
+            solution = state.get_moves();
+        }
+
+        int n1 = 0;
+        int n2 = 0;
+        for (auto p : state.get_conflicts()) {
+            switch (state.conflict_type(p)) {
+            case NO_CONFLICT:
+                break;
+            case CONFLICT_CLEAR:
+                n1++;
+                break;
+            case CONFLICT_FILL:
+                n2++;
+                break;
+            case CONFLICT_REPLACE:
+                n1++;
+                n2++;
+                break;
+            default:
+                assert(false);
+            }
+        }
+        if (max(n1, n2) > depth)
             return;
-        }
+        // TODO: same line heuristic
 
-        if (max(need_fill.size(), need_clear.size()) > depth)
-            return;
-
-        for (PackedCoord p : need_clear) {
-            auto moves = gen_moves_from(current, p);
-            for (const Move &move : moves) {
-                Infoset next = current;
-                apply_move(next, move);
-                this->moves.push_back(move);
-                rec(next, depth - 1);
-                this->moves.pop_back();
-
-                if (solved)
-                    break;
-            }
-        }
-    }
-
-    vector<Move> gen_moves_from(const Infoset &infoset, PackedCoord from) {
-        assert(initial_board[from] != WALL);
-        assert(
-            combine_cs_with_any_ball(infoset_get(infoset, from)) !=
-            CS_CONTRADICTION);
-
-        vector<Move> result;
-        for (int dir : DIRS) {
-            bool has_fulcrum = false;
-            if (initial_board[from - dir] == WALL) {
-                has_fulcrum = true;
-            } else {
-                CellSet fulcrum = infoset_get(infoset, from - dir);
-                if (combine_cs_with_any_ball(fulcrum) != CS_CONTRADICTION)
-                    has_fulcrum = true;
-            }
-            if (!has_fulcrum)
-                continue;
-
-            PackedCoord p = from + dir;
-            while (initial_board[p] != WALL) {
-                CellSet cs = infoset_get(infoset, p);
-                if (combine_cs_with_empty(cs) == CS_CONTRADICTION)
-                    break;
-                result.emplace_back(from, p);
-                p += dir;
-            }
-        }
-        return result;
-    }
-
-    void apply_move(Infoset &infoset, Move move) {
-        int dir = move_dir(move);
-        if (initial_board[move.first - dir] != WALL) {
-            CellSet &fulcrum = infoset[move.first - dir];
-            fulcrum = combine_cs_with_any_ball(fulcrum);
-            assert(fulcrum != CS_CONTRADICTION);
-        }
-
-        PackedCoord p = move.first + dir;
-        while (p != move.second) {
-            CellSet &cs = infoset[p];
-            cs = combine_cs_with_empty(cs);
-            assert(cs != CS_CONTRADICTION);
-            p += dir;
-        }
-
-        CellSet &from_cs = infoset[move.first];
-        CellSet &to_cs = infoset[move.second];
-
-        from_cs = combine_cs_with_any_ball(from_cs);
-        assert(from_cs != CS_CONTRADICTION);
-
-        assert(combine_cs_with_empty(to_cs) != CS_CONTRADICTION);
-        to_cs = from_cs;
-        from_cs = CS_EMPTY;
+        cnt++;
+        state.enumerate_moves([this, depth](){
+            // TODO: commutativity prunning
+            rec(depth - 1);
+        });
     }
 };
 
@@ -446,17 +631,46 @@ public:
             }
         }
 
-        Infoset goal;
+        map<PackedCoord, CellSet> goal;
         for (PackedCoord p = 0; p < target.size(); p++) {
             if (is_ball(target[p])) {
                 goal[p] = cell_to_cs(target[p]);
-                if (goal.size() == 1)
+                if (goal.size() == 2)
                     break;
             }
         }
-        Backtracker bt(start, goal);
+        // goal.erase(goal.begin()->first);
+        State state(start, goal);
+        state.show();
+
+        Backtracker bt(state);
+        auto sol = bt.solution;
+        reverse(sol.begin(), sol.end());
 
         vector<string> result;
+        for (auto move : sol)
+            result.push_back(format_move(reversed_move(move)));
         return result;
+    }
+
+private:
+    static string format_move(Move move) {
+        int dir = move_dir(move);
+        if (dir == -::W) {
+            dir = 3;
+        } else if (dir == -1) {
+            dir = 0;
+        } else if (dir == 1) {
+            dir = 2;
+        } else if (dir == ::W) {
+            dir = 1;
+        } else {
+            assert(false);
+        }
+        ostringstream out;
+        out << unpack_y(move.first) - 1 << ' '
+            << unpack_x(move.first) - 1 << ' '
+            << dir;
+        return out.str();
     }
 };
