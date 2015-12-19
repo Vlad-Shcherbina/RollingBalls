@@ -333,6 +333,13 @@ public:
         // (when building it we can be certain al items are unique)
         set<PackedCoord> explored_froms;
 
+        vector<PackedCoord> stage0_froms;
+        for (PackedCoord from : conflicts) {
+            Conflict ct = conflict_type(from);
+            assert(ct != NO_CONFLICT);
+            if (ct != CONFLICT_FILL)
+                stage0_froms.push_back(from);
+        }
         set<PackedCoord> stage1_froms;
 
         for (int stage = 0; stage < 2; stage ++) {
@@ -341,13 +348,10 @@ public:
 
             vector<PackedCoord> froms_to_explore;
             if (stage == 0) {
-                for (PackedCoord from : conflicts) {
-                    Conflict ct = conflict_type(from);
-                    assert(ct != NO_CONFLICT);
-                    if (ct != CONFLICT_FILL)
-                        froms_to_explore.push_back(from);
-                }
+                froms_to_explore = stage0_froms;
             } else if (stage == 1) {
+                for (auto from : stage0_froms)
+                    stage1_froms.erase(from);
                 froms_to_explore = {stage1_froms.begin(), stage1_froms.end()};
             } else {
                 assert(false);
@@ -686,6 +690,7 @@ public:
             }
         }
         goal.erase(goal.begin()->first);
+
         State state(board, goal);
         state.show();
         Backtracker bt(state, 1, 11);
