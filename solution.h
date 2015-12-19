@@ -368,6 +368,7 @@ public:
                     RestorePoint rp(*this);
                     edit_cur(from - dir, fulcrum);
 
+                    // TODO: move out of loop body
                     // TODO: combine with any ball just in case
                     CellSet rolling_ball = cur[from];
                     edit_cur(from, CS_EMPTY);
@@ -565,6 +566,56 @@ private:
 };
 
 
+bool point_in_hspan(PackedCoord pt, int min, int max) {
+    return min <= pt && pt <= max;
+}
+bool point_in_vspan(PackedCoord pt, int min, int max) {
+    assert(min % ::W == max % ::W);
+    return min <= pt && pt <= max && min % ::W == pt % ::W;
+}
+
+
+bool commute(Move move1, Move move2) {
+    if (move1.first == move2.first ||
+        move1.first == move2.second ||
+        move1.second == move2.first ||
+        move1.second == move2.second)
+        return false;
+
+    int d1 = move_dir(move1);
+    int m1min = min(move1.first - d1, move1.second);
+    int m1max = max(move1.first - d1, move1.second);
+    if (d1 == 1 || d1 == -1) {
+        if (point_in_hspan(move2.first, m1min, m1max))
+            return false;
+        if (point_in_hspan(move2.second, m1min, m1max))
+            return false;
+    } else {
+        if (point_in_vspan(move2.first, m1min, m1max))
+            return false;
+        if (point_in_vspan(move2.second, m1min, m1max))
+            return false;
+    }
+
+    int d2 = move_dir(move2);
+    int m2min = min(move2.first - d2, move2.second);
+    int m2max = max(move2.first - d2, move2.second);
+    if (d2 == 1 || d2 == -1) {
+        if (point_in_hspan(move1.first, m2min, m2max))
+            return false;
+        if (point_in_hspan(move1.second, m2min, m2max))
+            return false;
+    } else {
+        if (point_in_vspan(move1.first, m2min, m2max))
+            return false;
+        if (point_in_vspan(move1.second, m2min, m2max))
+            return false;
+    }
+
+    return true;
+}
+
+
 class Backtracker {
 public:
     bool solved;
@@ -573,9 +624,9 @@ public:
     Backtracker(State &state, int min_depth, int max_depth) : state(state) {
         solved = false;
         for (int depth = min_depth; depth <= max_depth; depth++) {
-            debug(depth);
+            // debug(depth);
             rec(depth);
-            debug(cnt);
+            // debug(cnt);
             if (solved)
                 break;
         }
@@ -632,6 +683,11 @@ private:
         // TODO: same line heuristic
 
         state.enumerate_moves([this, depth](Move move){
+            if (!moves.empty()) {
+                if (moves.back() > move && commute(moves.back(), move))
+                    return;
+            }
+
             moves.push_back(move);
 
             // TODO: commutativity prunning
@@ -680,16 +736,17 @@ public:
 
         Board board = start;
 
+        /*
         ////////////
         map<PackedCoord, CellSet> goal;
         for (PackedCoord p = 0; p < board.size(); p++) {
             if (is_ball(target[p])) {
                 goal[p] = cell_to_cs(target[p]);
-                if (goal.size() == 2)
+                if (goal.size() == 1)
                     break;
             }
         }
-        goal.erase(goal.begin()->first);
+        // goal.erase(goal.begin()->first);
 
         State state(board, goal);
         state.show();
@@ -711,8 +768,8 @@ public:
             }
         }
         ////////////
+        */
 
-        /*
         int depth = 1;
         while (depth <= 6) {
             show_start_and_target(board, target);
@@ -747,7 +804,7 @@ public:
             }
             debug(num_improvements);
             depth++;
-        }*/
+        }
 
         int num_balls = 0;
         for (auto c : target)
