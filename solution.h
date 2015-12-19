@@ -326,7 +326,7 @@ public:
         // cerr << endl;
     }
 
-    void enumerate_moves(function<void()> callback) {
+    void enumerate_moves(function<void(Move move)> callback) {
         auto conflicts_copy = conflicts;  // they will be modified
 
         set<PackedCoord> froms;
@@ -358,14 +358,9 @@ public:
 
                     {
                         RestorePoint rp2(*this);
-                        moves.emplace_back(from, p);
-
                         edit_cur(p, rolling_ball);
                         // assert(check_conflicts());
-                        callback();
-
-                        assert(moves.back() == make_pair(from, p));
-                        moves.pop_back();
+                        callback({from, p});
                     }
 
                     edit_cur(p, e);
@@ -393,12 +388,7 @@ public:
                             edit_cur(to, rolling_ball);
                             // assert(check_conflicts());
 
-                            moves.emplace_back(p, to);
-
-                            callback();
-
-                            assert(moves.back() == make_pair(p, to));
-                            moves.pop_back();
+                            callback({p, to});
                         }
                     }
 
@@ -441,7 +431,6 @@ public:
     }
 
     const vector<PackedCoord>& get_conflicts() const { return conflicts; }
-    const vector<Move>& get_moves() const { return moves; }
 
     class RestorePoint {
     public:
@@ -505,8 +494,6 @@ private:
     vector<pair<PackedCoord, CellSet>> undo_log;
     // true to add, false to remove
     vector<pair<PackedCoord, bool>> conflict_undo_log;
-
-    vector<Move> moves;
 
     void edit_cur(PackedCoord p, CellSet new_cs) {
         assert(is_valid_cs(new_cs));
@@ -576,6 +563,7 @@ public:
 
 private:
     State &state;
+    vector<Move> moves;
     int cnt = 0;
 
     void rec(int depth) {
@@ -584,7 +572,7 @@ private:
 
         if (state.get_conflicts().empty()) {
             solved = true;
-            solution = state.get_moves();
+            solution = moves;
         }
 
         int n1 = 0;
@@ -612,9 +600,14 @@ private:
         // TODO: same line heuristic
 
         cnt++;
-        state.enumerate_moves([this, depth](){
+        state.enumerate_moves([this, depth](Move move){
+            moves.push_back(move);
+
             // TODO: commutativity prunning
             rec(depth - 1);
+
+            assert(moves.back() == move);
+            moves.pop_back();
         });
     }
 };
