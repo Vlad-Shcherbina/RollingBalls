@@ -9,7 +9,8 @@ using namespace std;
 
 #define DRAW_BOARDS
 
-#include "solution.h"
+// 'cause topcoder requires single file submission
+#include "solution.cpp"
 
 
 int main(int argc, char **argv) {
