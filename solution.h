@@ -7,6 +7,9 @@
 #include <map>
 #include <sstream>
 #include <cstdint>
+#include <iomanip>
+#include <random>
+#include <sys/time.h>
 
 #include "pretty_printing.h"
 
@@ -24,6 +27,16 @@ using namespace std;
     << ", " #z " = " << (z) << endl
 
 
+const double TIME_LIMIT = 9.0;
+int get_time_cnt = 0;
+double get_time() {
+    get_time_cnt++;
+    timeval tv;
+    gettimeofday(&tv, nullptr);
+    return tv.tv_sec + tv.tv_usec * 1e-6;
+}
+
+
 int W = -1;
 int H = -1;
 
@@ -34,6 +47,7 @@ array<int, 4> DIRS;
 typedef char Cell;
 const Cell WALL = '#';
 const Cell EMPTY = '.';
+const Cell FORBIDDEN = 'x';
 bool is_valid_cell(Cell c) {
     return c == WALL || c == EMPTY || (c >= '0' && c <= '9');
 }
@@ -130,7 +144,7 @@ OUT_ITER gen_forward_rolls(
         PackedCoord pos = from;
         while (board[pos + d] == EMPTY)
             pos += d;
-        if (pos != from) {
+        if (pos != from && board[pos + d] != FORBIDDEN) {
             *result = pos; ++result;
         }
     }
@@ -149,9 +163,9 @@ template<typename OUT_ITER>
 OUT_ITER gen_backward_rolls(
     PackedCoord to, const Board &board, OUT_ITER result) {
 
-    assert(board[to] == EMPTY);
+    // assert(board[to] == EMPTY);
     for (int d : DIRS) {
-        if (board[to - d] != EMPTY) {
+        if (board[to - d] != EMPTY && board[to - d] != FORBIDDEN) {
             PackedCoord pos = to + d;
             while (board[pos] == EMPTY) {
                 *result = pos; ++result;
@@ -618,6 +632,58 @@ bool commute(Move move1, Move move2) {
 }
 
 
+int basin_area(const Board &board, PackedCoord destination) {
+    vector<PackedCoord> worklist;
+    vector<bool> visited(board.size(), false);
+    int result = 0;
+
+    worklist.push_back(destination);
+    visited[destination] = true;
+    while (!worklist.empty()) {
+        PackedCoord p = worklist.back();
+        worklist.pop_back();
+
+        for (auto p2 : gen_backward_rolls_vector(p, board)) {
+            if (!visited[p2]) {
+                result++;
+                visited[p2] = true;
+                worklist.push_back(p2);
+            }
+        }
+    }
+
+    return result;
+}
+
+
+double basin_score(const Board &board, PackedCoord destination) {
+    vector<PackedCoord> balls;
+    for (PackedCoord p = 0; p < board.size(); p++)
+        if (is_ball(board[p]))
+            balls.push_back(p);
+
+    Board adjusted = board;
+    double result = 0;
+    default_random_engine gen(42);
+
+    const int N = 10;
+    for (int i = 0; i < N; i++) {
+        for (auto p : balls) {
+            if (bernoulli_distribution(0.5)(gen)) {
+                adjusted[p] = FORBIDDEN;
+            } else {
+                if (bernoulli_distribution(0.5)(gen))
+                    adjusted[p] = board[p];
+                else
+                    adjusted[p] = EMPTY;
+            }
+        }
+        result += basin_area(adjusted, destination);
+    }
+    return result / N;
+}
+
+
 class Backtracker {
 public:
     bool solved;
@@ -692,7 +758,6 @@ private:
 
             moves.push_back(move);
 
-            // TODO: commutativity prunning
             rec(depth - 1);
 
             assert(moves.back() == move);
@@ -716,6 +781,11 @@ void show_start_and_target(const Board &start, const Board &target) {
 class RollingBalls {
 public:
     vector<string> restorePattern(vector<string> raw_start, vector<string> raw_target) {
+        double start_time = get_time();
+        for (int i = 0; i < 1000; i++)
+            get_time();
+        debug(get_time() - start_time);
+
         vector<string> result;
 
         ::H = raw_start.size();
@@ -737,6 +807,26 @@ public:
         }
 
         Board board = start;
+
+        draw_board([&](PackedCoord p) {
+            if (target[p] == WALL) {
+                ansi_style(DEFAULT_COLOR, true);
+                cerr << "    ";
+                return;
+            }
+            if (is_ball(target[p]))
+                ansi_style(GREEN);
+            cerr << setw(4) << (int)basin_score(target, p);
+
+        });
+
+        vector<pair<double, PackedCoord>> prioritized_targets;
+        for (PackedCoord p = 0; p < board.size(); p++) {
+            if (is_ball(target[p])) {
+                prioritized_targets.emplace_back(basin_score(target, p), p);
+            }
+        }
+        sort(prioritized_targets.begin(), prioritized_targets.end());
 
         /*
         ////////////
@@ -771,42 +861,51 @@ public:
         }
         ////////////
         */
+        map<PackedCoord, CellSet> permanent_goal;
+        int cnt = 0;
+        for (int generation = 0; generation < 3; generation++) {
+            debug(generation);
+            int num_tasks = 0;
+            int num_solved = 0;
+            for (auto t : prioritized_targets) {
+                if (cnt % 10 == 0 && get_time() > start_time + TIME_LIMIT) {
+                    cerr << "TIMEOUT" << endl;
+                    break;
+                }
+                cnt++;
+                // debug(t);
+                PackedCoord p = t.second;
+                if (permanent_goal.count(p) > 0)
+                    continue;
 
-        int depth = 1;
-        while (depth <= 6) {
-            show_start_and_target(board, target);
-            debug(depth);
-            int num_improvements = 0;
+                auto current_goal = permanent_goal;
+                assert(is_ball(target[p]));
+                if (generation == 2)
+                    current_goal[p] = CS_ANY_BALL;
+                else
+                    current_goal[p] = cell_to_cs(target[p]);
 
-            for (PackedCoord p = 0; p < board.size(); p++) {
-                if (is_ball(target[p]) && target[p] != board[p]) {
-                    map<PackedCoord, CellSet> goal;
-                    goal[p] = cell_to_cs(target[p]);
-
-                    // keep all already achieved ones
-                    for (PackedCoord p2 = 0; p2 < board.size(); p2++) {
-                        if (is_ball(target[p2]) && target[p2] == board[p2])
-                            goal[p2] = cell_to_cs(target[p2]);
+                State state(board, current_goal);
+                Backtracker bt(state, 1, generation == 1 ? 5 : 6);
+                num_tasks++;
+                if (bt.solved) {
+                    num_solved++;
+                    // debug(bt.solution.size());
+                    permanent_goal[p] = current_goal[p];
+                    auto sol = bt.solution;
+                    reverse(sol.begin(), sol.end());
+                    for (auto move : sol) {
+                        move = reversed_move(move);
+                        apply_move(board, move);
+                        result.push_back(format_move(move));
                     }
-
-                    State state(board, goal);
-
-                    Backtracker bt(state, 1, depth);
-                    if (bt.solved) {
-                        auto sol = bt.solution;
-                        reverse(sol.begin(), sol.end());
-                        for (auto move : sol) {
-                            move = reversed_move(move);
-                            apply_move(board, move);
-                            result.push_back(format_move(move));
-                        }
-                        num_improvements++;
-                    }
+                    // num_improvements++;
                 }
             }
-            debug(num_improvements);
-            depth++;
+            debug2(num_tasks, num_solved);
         }
+
+        show_start_and_target(board, target);
 
         int num_balls = 0;
         for (auto c : target)
@@ -815,6 +914,10 @@ public:
         debug(num_balls);
         debug(num_balls * 20 - result.size());
         debug(result.size());
+
+        debug(get_time_cnt);
+        double total_time = get_time() - start_time;
+        debug(total_time);
 
         double score = 0.0;
         for (PackedCoord p = 0; p < board.size(); p++) {
