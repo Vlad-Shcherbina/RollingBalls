@@ -13,7 +13,7 @@
 // I'm not even sure why this shadowing seems to work.
 // Also, there is a risk that libraries relying on old behavior will break.
 // But it's convenient for debug output.
-std::ostream& operator<<(std::ostream &out, const string &s) {
+std::ostream& operator<<(std::ostream &out, const std::string &s) {
     out << '"';
     for (char c : s) {
         switch (c) {
