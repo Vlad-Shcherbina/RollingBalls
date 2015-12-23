@@ -7,6 +7,7 @@
 
 using namespace std;
 
+#define LOCAL
 #define DRAW_BOARDS
 
 // 'cause topcoder requires single file submission

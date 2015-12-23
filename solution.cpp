@@ -1,3 +1,7 @@
+#ifndef LOCAL
+#define NDEBUG
+#endif
+
 #include <vector>
 #include <string>
 #include <iostream>
@@ -28,7 +32,13 @@ using namespace std;
     << ", " #z " = " << (z) << endl
 
 
+#ifdef LOCAL
+const double TIME_LIMIT = 7.0;
+#else
 const double TIME_LIMIT = 9.0;
+#endif
+
+
 int get_time_cnt = 0;
 double get_time() {
     get_time_cnt++;
@@ -974,6 +984,10 @@ void show_start_and_target(const Board &start, const Board &target) {
 class RollingBalls {
 public:
     vector<string> restorePattern(vector<string> raw_start, vector<string> raw_target) {
+#ifndef LOCAL
+        assert(false && "asserts should be disabled");
+#endif
+
         double start_time = get_time();
         for (int i = 0; i < 1000; i++)
             get_time();
