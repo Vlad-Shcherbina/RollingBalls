@@ -770,7 +770,8 @@ private:
 
                 // debug(pp);
                 // TODO: take into account that this cell shouldn't be in goals
-                if (is_ball(initial_board[pp]) && (
+                if (is_ball(initial_board[pp]) &&
+                    state.get_cur()[pp] == CS_UNKNOWN && (
                         ball == CS_ANY_BALL ||
                         ball == cell_to_cs(initial_board[pp]))) {
 
