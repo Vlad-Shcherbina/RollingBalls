@@ -1060,7 +1060,8 @@ public:
             int num_tasks = 0;
             int num_solved = 0;
             for (auto t : prioritized_targets) {
-                if (cnt % 10 == 0 && get_time() > start_time + TIME_LIMIT) {
+                // TODO: more fine-grained timeout (inside rec)
+                if (cnt % 5 == 0 && get_time() > start_time + TIME_LIMIT) {
                     cerr << "TIMEOUT" << endl;
                     break;
                 }
