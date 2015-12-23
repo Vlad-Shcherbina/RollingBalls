@@ -482,6 +482,14 @@ public:
     const Board& get_initial_board() const { return initial_board; }
     const vector<CellSet>& get_cur() const { return cur; }
 
+    map<PackedCoord, CellSet> rebuild_goals() const {
+        map<PackedCoord, CellSet> result;
+        for (PackedCoord p = 0; p < cur.size(); p++)
+            if (cur[p] != CS_UNKNOWN)
+                result[p] = cur[p];
+        return result;
+    }
+
     class RestorePoint {
     public:
         RestorePoint(State &state) : state(state) {
@@ -761,6 +769,7 @@ private:
                 }
 
                 // debug(pp);
+                // TODO: take into account that this cell shouldn't be in goals
                 if (is_ball(initial_board[pp]) && (
                         ball == CS_ANY_BALL ||
                         ball == cell_to_cs(initial_board[pp]))) {
@@ -906,6 +915,48 @@ private:
 };
 
 
+pair<int, vector<Move>> multistep(State state, int depth) {
+    Backtracker bt(state, 1, depth);
+    if (bt.solved) {
+        return {1, bt.solution};
+    }
+    for (int d : DIRS) {
+        Board board = state.get_initial_board();
+        PackedCoord p = state.get_conflicts().front();
+
+        if (state.get_cur()[p + d] == CS_UNKNOWN && board[p + d] == EMPTY) {
+            auto intermediate_goals = state.rebuild_goals();
+            intermediate_goals.erase(p);
+            intermediate_goals[p + d] = CS_ANY_BALL;
+
+            State s1(board, intermediate_goals);
+            Backtracker bt1(s1, 1, depth);
+
+            if (!bt1.solved)
+                continue;
+
+            auto moves1 = bt1.solution;
+            reverse(moves1.begin(), moves1.end());
+            for (auto move : moves1) {
+                move = reversed_move(move);
+                apply_move(board, move);
+            }
+
+            State s2(board, state.rebuild_goals());
+            Backtracker bt2(s2, 1, depth);
+
+            if (!bt2.solved)
+                continue;
+
+            vector<Move> result = bt2.solution;
+            copy(moves1.rbegin(), moves1.rend(), back_inserter(result));
+            return {2, result};
+        }
+    }
+    return {0, vector<Move>()};
+}
+
+
 void show_start_and_target(const Board &start, const Board &target) {
     map<PackedCoord, CellSet> goal;
     for (PackedCoord p = 0; p < start.size(); p++) {
@@ -1004,6 +1055,7 @@ public:
         int cnt = 0;
         for (int generation = 0; generation < 3; generation++) {
             debug(generation);
+            string pattern;
             int num_tasks = 0;
             int num_solved = 0;
             for (auto t : prioritized_targets) {
@@ -1025,13 +1077,13 @@ public:
                     current_goal[p] = cell_to_cs(target[p]);
 
                 State state(board, current_goal);
-                Backtracker bt(state, 1, generation == 1 ? 5 : 6);
+                auto res = multistep(state, generation == 1 ? 5 : 6);
                 num_tasks++;
-                if (bt.solved) {
+                if (res.first) {
                     num_solved++;
                     // debug(bt.solution.size());
                     permanent_goal[p] = current_goal[p];
-                    auto sol = bt.solution;
+                    auto sol = res.second;
                     reverse(sol.begin(), sol.end());
                     for (auto move : sol) {
                         move = reversed_move(move);
@@ -1039,9 +1091,17 @@ public:
                         result.push_back(format_move(move));
                     }
                     // num_improvements++;
+                    pattern += '0' + res.first;
+                } else {
+                    // if (generation == 0) {
+                    //     state.show();
+                    //     cerr << "---------------------" << endl;
+                    // }
+                    pattern += ".";
                 }
             }
             debug2(num_tasks, num_solved);
+            debug(pattern);
         }
 
         show_start_and_target(board, target);
