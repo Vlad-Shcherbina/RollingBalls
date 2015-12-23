@@ -277,11 +277,13 @@ const Conflict CONFLICT_FILL = 1;
 const Conflict CONFLICT_CLEAR = 2;
 const Conflict CONFLICT_REPLACE = 3;
 
-
 class State {
 public:
     State(const Board &initial_board, map<PackedCoord, CellSet> goal)
         : initial_board(initial_board), cur(initial_board.size(), CS_UNKNOWN) {
+
+        undo_log.reserve(256);
+        conflict_undo_log.reserve(256);
 
         PackedCoord p = 0;
         for (Cell cell : initial_board) {
@@ -505,11 +507,11 @@ public:
 
             assert(state.conflict_undo_log.size() >= conflict_undo_log_size);
             while (state.conflict_undo_log.size() > conflict_undo_log_size) {
-                auto &q = state.conflict_undo_log.back();
-                if (q.second) {
-                    state.conflicts.push_back(q.first);
+                PackedCoord p = state.conflict_undo_log.back();
+                if (p > 0) {
+                    state.conflicts.push_back(p);
                 } else {
-                    auto it = find(state.conflicts.begin(), state.conflicts.end(), q.first);
+                    auto it = find(state.conflicts.begin(), state.conflicts.end(), -p);
                     assert(it != state.conflicts.end());
                     swap(*it, state.conflicts.back());
                     state.conflicts.pop_back();
@@ -550,8 +552,8 @@ private:
     vector<PackedCoord> conflicts;
 
     vector<pair<PackedCoord, CellSet>> undo_log;
-    // true to add, false to remove
-    vector<pair<PackedCoord, bool>> conflict_undo_log;
+    // positive to add, negative to remove
+    vector<PackedCoord> conflict_undo_log;
 
     void edit_cur(PackedCoord p, CellSet new_cs) {
         assert(is_valid_cs(new_cs));
@@ -567,13 +569,13 @@ private:
 
             if (old_conflict == NO_CONFLICT && new_conflict != NO_CONFLICT) {
                 conflicts.push_back(p);
-                conflict_undo_log.emplace_back(p, false);
+                conflict_undo_log.emplace_back(-p);
             } else if (old_conflict != NO_CONFLICT && new_conflict == NO_CONFLICT) {
                 auto it = find(conflicts.begin(), conflicts.end(), p);
                 assert(it != conflicts.end());
                 swap(*it, conflicts.back());
                 conflicts.pop_back();
-                conflict_undo_log.emplace_back(p, true);
+                conflict_undo_log.emplace_back(+p);
             }
         }
     }
