@@ -600,7 +600,7 @@ bool point_in_hspan(PackedCoord pt, int min, int max) {
 }
 bool point_in_vspan(PackedCoord pt, int min, int max) {
     assert(min % ::W == max % ::W);
-    return min <= pt && pt <= max && min % ::W == pt % ::W;
+    return min <= pt && pt <= max && (pt - min) % ::W == 0;
 }
 
 
