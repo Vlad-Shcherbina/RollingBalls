@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <random>
 #include <sys/time.h>
+#include <deque>
 
 #include "pretty_printing.h"
 
@@ -478,6 +479,8 @@ public:
     }
 
     const vector<PackedCoord>& get_conflicts() const { return conflicts; }
+    const Board& get_initial_board() const { return initial_board; }
+    const vector<CellSet>& get_cur() const { return cur; }
 
     class RestorePoint {
     public:
@@ -631,6 +634,14 @@ bool commute(Move move1, Move move2) {
     return true;
 }
 
+bool commute(const vector<Move> &moves1, const vector<Move> &moves2) {
+    for (const Move &move1 : moves1)
+        for (const Move &move2 : moves2)
+            if (!commute(move1, move2))
+                return false;
+    return true;
+}
+
 
 int basin_area(const Board &board, PackedCoord destination) {
     vector<PackedCoord> worklist;
@@ -708,12 +719,134 @@ public:
         // }
 
         // debug(solution.size());
+
+        // debug(openings_cache.size());
     }
 
 private:
     State &state;
     vector<Move> moves;
     int64_t cnt = 0;
+
+    typedef vector<Move> Opening;
+    map<pair<PackedCoord, CellSet>, vector<Opening>> openings_cache;
+
+
+    vector<Opening> compute_openings(PackedCoord destination, CellSet ball) {
+        assert(openings_cache.count({destination, ball}) == 0);
+        const Board &initial_board = state.get_initial_board();
+        assert(initial_board[destination] == EMPTY);
+
+        vector<Opening> result;
+        deque<PackedCoord> worklist;
+        vector<Move> last_move(state.get_initial_board().size(), Move(0, 0));
+        last_move[destination] = Move(-1, -1);
+        worklist.push_back(destination);
+        while (!worklist.empty()) {
+            PackedCoord p = worklist.front();
+            worklist.pop_front();
+
+            assert(last_move[p] != Move(0, 0));
+
+            for (int d : DIRS) {
+                if (initial_board[p + d] == EMPTY)
+                    continue;
+                PackedCoord pp = p - d;
+                while (initial_board[pp] == EMPTY) {
+                    if (last_move[pp] == Move(0, 0)) {
+                        last_move[pp] = {p, pp};
+                        worklist.push_back(pp);
+                    }
+                    pp -= d;
+                }
+
+                // debug(pp);
+                if (is_ball(initial_board[pp]) && (
+                        ball == CS_ANY_BALL ||
+                        ball == cell_to_cs(initial_board[pp]))) {
+
+                    bool valid = true;
+                    Opening op;
+                    op.emplace_back(p, pp);
+                    PackedCoord t = p;
+                    while (t != destination) {
+                        // make sure we don't bounce off ourselves
+                        int dd = move_dir(last_move[t]);
+                        if (last_move[t].first - dd == pp) {
+                            valid = false;
+                            break;
+                        }
+
+                        op.push_back(last_move[t]);
+                        t = last_move[t].first;
+                    }
+                    if (valid) {
+                        reverse(op.begin(), op.end());
+                        result.push_back(op);
+                        return result;
+                    }
+                }
+            }
+        }
+
+        /*
+        for (int d : DIRS) {
+            if (initial_board[destination + d] != EMPTY) {
+                PackedCoord p = destination - d;
+                while (initial_board[p] == EMPTY) {
+                    p -= d;
+                }
+                if (is_ball(initial_board[p])) {
+                    if (ball == CS_ANY_BALL ||
+                        ball == cell_to_cs(initial_board[p])) {
+                        result.push_back({{destination, p}});
+                        return result;
+                    }
+                }
+            }
+        }*/
+        return result;
+    }
+
+    const vector<Opening>& get_openings(PackedCoord destination, CellSet ball) {
+        assert(ball == CS_ANY_BALL ||
+            ball >= CS_FIRST_BALL && ball <= CS_LAST_BALL);
+
+        auto p = openings_cache.find({destination, ball});
+        if (p != openings_cache.end())
+            return p->second;
+
+        auto result = compute_openings(destination, ball);
+        openings_cache[{destination, ball}] = result;
+        return openings_cache[{destination, ball}];
+    }
+
+    bool try_solve_with_openings() {
+        const auto &conflicts = state.get_conflicts();
+        vector<Opening> openings;
+        for (PackedCoord conflict : conflicts) {
+            assert(state.conflict_type(conflict) == CONFLICT_CLEAR);
+            const auto &ops = get_openings(conflict, state.get_cur()[conflict]);
+            if (ops.empty())
+                return false;
+            const auto &op = ops.front();
+            PackedCoord origin = op.back().second;
+            if (combine_cs_with_empty(state.get_cur()[origin]) == CS_CONTRADICTION)
+                return false;
+            for (const auto &prev_op : openings)
+                if (!commute(prev_op, op))
+                    return false;
+            openings.push_back(op);
+        }
+        solution = moves;
+        for (const auto &op : openings)
+            copy(op.begin(), op.end(), back_inserter(solution));
+        // cerr << "solved with openings" << endl;
+        // debug(conflicts);
+        // debug(openings);
+        solved = true;
+        return true;
+    }
 
     void rec(int depth) {
         if (solved)
@@ -724,6 +857,7 @@ private:
         if (state.get_conflicts().empty()) {
             solved = true;
             solution = moves;
+            return;
         }
 
         int n1 = 0;
@@ -746,9 +880,14 @@ private:
                 assert(false);
             }
         }
+        if (n1 == state.get_conflicts().size() && n2 == 0) {
+            if (try_solve_with_openings())
+                return;
+        }
         if (max(n1, n2) > depth)
             return;
         // TODO: same line heuristic
+
 
         state.enumerate_moves([this, depth](Move move){
             if (!moves.empty()) {
@@ -931,6 +1070,11 @@ public:
         if (num_balls > 0)
             score /= num_balls;
         debug(score);
+
+        if (result.size() > 20 * num_balls) {
+            cerr << "TOO MANY MOVES!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
+            result.resize(20 * num_balls);
+        }
         return result;
     }
 
