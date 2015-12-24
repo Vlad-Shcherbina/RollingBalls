@@ -1,6 +1,6 @@
 set -e -x
 
-RELEASE=false
+RELEASE=true
 
 # asan makes it painful to get coredumps
 MAYBE_ASAN=""

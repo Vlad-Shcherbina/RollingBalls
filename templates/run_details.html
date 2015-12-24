@@ -1,0 +1,16 @@
+<p>
+<a href="{{ url_for('list_runs', baseline_id=baseline_id) }}">all runs</a>
+</p>
+<p>
+id: {{ id }}
+{% if baseline_id %}
+  (baseline_id:
+  <a href="{{ url_for('run_details', id=baseline_id) }}">{{ baseline_id }}</a>)
+{% endif %}
+</p>
+<hr>
+
+{{ table | safe }}
+
+<hr>
+<pre>{{ debug }}</pre>
