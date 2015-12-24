@@ -1005,6 +1005,7 @@ public:
         debug(knobs);
 
         vector<string> result;
+
         if (knobs.at("return_empty"))
             return result;
 
@@ -1013,18 +1014,36 @@ public:
         assert(raw_target.size() == ::H);
         assert(raw_target.front().size() == ::W);
 
+        cerr << "# "; debug(W);
+        cerr << "# "; debug(H);
+
         ::H += 2;
         ::W += 2;
         DIRS = {{1, -1, ::W, -::W}};
 
+        set<Cell> ball_colors;
+        int num_balls = 0;
+        int num_walls = 0;
         Board start(::W * ::H, WALL);
         Board target(::W * ::H, WALL);
         for (int i = 1; i < ::H - 1; i++) {
             for (int j = 1; j < ::W - 1; j++) {
                 start[pack(j, i)] = raw_start[i - 1][j - 1];
-                target[pack(j, i)] = raw_target[i - 1][j - 1];
+                char c = target[pack(j, i)] = raw_target[i - 1][j - 1];
+
+                if (is_ball(c)) {
+                    num_balls++;
+                    ball_colors.insert(c);
+                } else if (c == WALL) {
+                    num_walls++;
+                }
             }
         }
+
+        cerr << "# "; debug(num_walls);
+        cerr << "# "; debug(num_balls);
+        int num_colors = ball_colors.size();
+        cerr << "# "; debug(num_colors);
 
         Board board = start;
 
@@ -1137,17 +1156,14 @@ public:
 
         show_start_and_target(board, target);
 
-        int num_balls = 0;
-        for (auto c : target)
-            if (is_ball(c))
-                num_balls++;
         debug(num_balls);
         debug(num_balls * 20 - result.size());
-        debug(result.size());
+        int result_size = result.size();
+        cerr << "# "; debug(result_size);
 
         debug(get_time_cnt);
         double total_time = get_time() - start_time;
-        debug(total_time);
+        cerr << "# "; debug(total_time);
 
         double score = 0.0;
         for (PackedCoord p = 0; p < board.size(); p++) {
@@ -1160,7 +1176,7 @@ public:
         }
         if (num_balls > 0)
             score /= num_balls;
-        debug(score);
+        cerr << "# "; debug(score);
 
         if (result.size() > 20 * num_balls) {
             cerr << "TOO MANY MOVES!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
