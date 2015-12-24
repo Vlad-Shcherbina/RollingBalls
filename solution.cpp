@@ -48,6 +48,12 @@ double get_time() {
 }
 
 
+map<string, int> custom_knobs;  // from argv
+map<string, int> knobs = {
+    {"return_empty", 0}
+};
+
+
 int W = -1;
 int H = -1;
 
@@ -987,13 +993,20 @@ public:
 #ifndef LOCAL
         assert(false && "asserts should be disabled");
 #endif
-
         double start_time = get_time();
         for (int i = 0; i < 1000; i++)
             get_time();
         debug(get_time() - start_time);
 
+        debug(custom_knobs);
+        for (const auto &kv : custom_knobs) {
+            knobs.at(kv.first) = kv.second;
+        }
+        debug(knobs);
+
         vector<string> result;
+        if (knobs.at("return_empty"))
+            return result;
 
         ::H = raw_start.size();
         ::W = raw_start.front().size();

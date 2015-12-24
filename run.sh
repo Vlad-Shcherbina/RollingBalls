@@ -24,11 +24,12 @@ else
         main.cpp -o main
 fi
 
-if [ -z "$1" ]; then
+if [ $# -eq 0 ]; then
     seed=1
 else
     seed="$1"
+    shift
 fi
 
 java -jar tester/tester.jar \
-    -exec "./driver.sh" -seed "$seed" -novis
+    -exec "./driver.sh $*" -seed "$seed" -novis

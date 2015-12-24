@@ -15,7 +15,16 @@ using namespace std;
 
 
 int main(int argc, char **argv) {
-    (void)argc; (void)argv;  // suppress unused parameter warning
+    vector<string> args(argv + 1, argv + argc);
+    for (auto arg : args) {
+        int pos = arg.find('=');
+        assert(pos != string::npos);
+        auto key = arg.substr(0, pos);
+        auto value = stoi(arg.substr(pos + 1));
+        assert(knobs.count(key) > 0);
+        assert(custom_knobs.count(key) == 0);
+        custom_knobs[key] = value;
+    }
 
     int H;
     cin >> H;
