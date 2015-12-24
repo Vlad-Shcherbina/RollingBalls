@@ -1101,23 +1101,22 @@ public:
         ////////////
         */
         map<PackedCoord, CellSet> permanent_goal;
-        int cnt = 0;
         for (int generation = 0; generation < 3; generation++) {
             debug(generation);
             string pattern;
             int num_tasks = 0;
             int num_solved = 0;
             for (auto t : prioritized_targets) {
-                // TODO: more fine-grained timeout (inside rec)
-                if (cnt % 5 == 0 && get_time() > start_time + TIME_LIMIT) {
-                    cerr << "TIMEOUT" << endl;
-                    break;
-                }
-                cnt++;
                 // debug(t);
                 PackedCoord p = t.second;
                 if (permanent_goal.count(p) > 0)
                     continue;
+
+                // TODO: more fine-grained timeout (inside rec)
+                if (get_time() > start_time + TIME_LIMIT) {
+                    cerr << "TIMEOUT" << endl;
+                    break;
+                }
 
                 auto current_goal = permanent_goal;
                 assert(is_ball(target[p]));
