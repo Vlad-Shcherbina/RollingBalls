@@ -48,10 +48,10 @@ class Distribution(object):
         if self.n == 0:
             return '--'
         if self.sigma() < 1e-10:
-            return '{:.3f}'.format(self.mean())
+            return '{:.4f}'.format(self.mean())
         return (
             '<span title="{}..{}, {} items">'
-            '{:.3f} &plusmn; <i>{:.3f}</i>'
+            '{:.4f} &plusmn; <i>{:.4f}</i>'
             '</span>'.format(
                 self.min, self.max, self.n, self.mean(), self.sigma()))
 
@@ -94,15 +94,32 @@ def render_table(results, baseline_results):
 
     all_seeds = sorted(result_by_seed.keys() | baseline_result_by_seed.keys())
 
+    rs = {}
+    rs.update(baseline_result_by_seed)
+    rs.update(result_by_seed)
+    def bucket(r):
+        wall_density = r['num_walls'] / (r['W'] * r['H'])
+        ball_density = r['num_balls'] / (r['W'] * r['H'])
+        if wall_density < 0.166:
+            return 'w'
+        elif wall_density < 0.233:
+            return 'ww'
+        else:
+            return 'www'
+
+    bucketed_groups = collections.defaultdict(list)
+    for seed, r in rs.items():
+        bucketed_groups[bucket(r)].append(seed)
+
     groups = [(seed, [seed]) for seed in all_seeds]
-    groups = [('all', all_seeds)] + groups
+    groups = [('all', all_seeds)] + sorted(bucketed_groups.items()) + groups
 
     fout = io.StringIO()
     fout.write('<table>')
 
     for group_name, group in groups:
         fout.write('<tr>')
-        fout.write('<td>{}</td>'.format(group_name))
+        fout.write('<td title="{} seeds">{}</td>'.format(len(group), group_name))
 
         d = Distribution()
         for seed in group:
