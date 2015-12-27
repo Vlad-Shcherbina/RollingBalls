@@ -693,10 +693,12 @@ int basin_area(const Board &board, PackedCoord destination) {
 }
 
 
-double basin_score(const Board &board, PackedCoord destination) {
+double basin_score(
+        const Board &board, PackedCoord destination,
+        map<PackedCoord, CellSet> achieved) {
     vector<PackedCoord> balls;
     for (PackedCoord p = 0; p < board.size(); p++)
-        if (is_ball(board[p]))
+        if (is_ball(board[p]) && achieved.count(p) == 0)
             balls.push_back(p);
 
     Board adjusted = board;
@@ -1045,6 +1047,9 @@ public:
         int num_colors = ball_colors.size();
         cerr << "# "; debug(num_colors);
 
+        int bucket = (1.0 * num_walls / (W * H) - 0.1) * 15;
+        if (bucket > 2) bucket = 2;
+
         Board board = start;
 
         draw_board([&](PackedCoord p) {
@@ -1055,83 +1060,57 @@ public:
             }
             if (is_ball(target[p]))
                 ansi_style(GREEN);
-            cerr << setw(4) << (int)basin_score(target, p);
+            cerr << setw(4) << (int)basin_score(target, p, {});
 
         });
 
-        vector<pair<double, PackedCoord>> prioritized_targets;
-        for (PackedCoord p = 0; p < board.size(); p++) {
-            if (is_ball(target[p])) {
-                prioritized_targets.emplace_back(basin_score(target, p), p);
-            }
-        }
-        sort(prioritized_targets.begin(), prioritized_targets.end());
+        map<PackedCoord, CellSet> achieved;
+        for (int generation = 0; generation < 2; generation++) {
 
-        /*
-        ////////////
-        map<PackedCoord, CellSet> goal;
-        for (PackedCoord p = 0; p < board.size(); p++) {
-            if (is_ball(target[p])) {
-                goal[p] = cell_to_cs(target[p]);
-                if (goal.size() == 1)
-                    break;
+            vector<pair<double, PackedCoord>> prioritized_targets;
+            for (PackedCoord p = 0; p < board.size(); p++) {
+                if (is_ball(target[p]) && achieved.count(p) == 0) {
+                    prioritized_targets.emplace_back(
+                        -basin_score(target, p, achieved), p);
+                }
             }
-        }
-        // goal.erase(goal.begin()->first);
+            sort(prioritized_targets.begin(), prioritized_targets.end());
 
-        State state(board, goal);
-        state.show();
-        Backtracker bt(state, 1, 11);
-        debug(bt.solved);
-        if (bt.solved) {
-            for (auto move : bt.solution) {
-                debug(unpack_move(move));
-                state.apply_move(move);
-                state.show();
-            }
-
-            auto sol = bt.solution;
-            reverse(sol.begin(), sol.end());
-            for (auto move : sol) {
-                move = reversed_move(move);
-                apply_move(board, move);
-                result.push_back(format_move(move));
-            }
-        }
-        ////////////
-        */
-        map<PackedCoord, CellSet> permanent_goal;
-        for (int generation = 0; generation < 3; generation++) {
-            debug(generation);
             string pattern;
+            int step = 0;
             int num_tasks = 0;
             int num_solved = 0;
-            for (auto t : prioritized_targets) {
-                // debug(t);
-                PackedCoord p = t.second;
-                if (permanent_goal.count(p) > 0)
-                    continue;
+            while (!prioritized_targets.empty()) {
+                if (bucket < 2 && ++step % (num_balls / (bucket ? 10 : 5) + 1) == 0) {
+                    for (auto &t : prioritized_targets)
+                        t.first = -basin_score(target, t.second, achieved);
+                    sort(prioritized_targets.begin(), prioritized_targets.end());
+                }
 
+                auto t = prioritized_targets.back();
+                prioritized_targets.pop_back();
+                PackedCoord p = t.second;
+                assert(achieved.count(p) == 0);
                 // TODO: more fine-grained timeout (inside rec)
                 if (get_time() > start_time + TIME_LIMIT) {
                     cerr << "TIMEOUT" << endl;
                     break;
                 }
 
-                auto current_goal = permanent_goal;
+                auto current_goal = achieved;
                 assert(is_ball(target[p]));
-                if (generation == 2)
-                    current_goal[p] = CS_ANY_BALL;
-                else
+                if (generation == 0)
                     current_goal[p] = cell_to_cs(target[p]);
+                else
+                    current_goal[p] = CS_ANY_BALL;
 
                 State state(board, current_goal);
-                auto res = multistep(state, generation == 1 ? 5 : 6);
+                auto res = multistep(state, 6);
+
                 num_tasks++;
                 if (res.first) {
                     num_solved++;
-                    // debug(bt.solution.size());
-                    permanent_goal[p] = current_goal[p];
+                    achieved[p] = current_goal[p];
                     auto sol = res.second;
                     reverse(sol.begin(), sol.end());
                     for (auto move : sol) {
@@ -1139,7 +1118,6 @@ public:
                         apply_move(board, move);
                         result.push_back(format_move(move));
                     }
-                    // num_improvements++;
                     pattern += '0' + res.first;
                 } else {
                     // if (generation == 0) {
